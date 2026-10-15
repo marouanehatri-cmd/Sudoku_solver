@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sudoku Solver</title>
+<style>
+:root{
+  --paper:#E9EFF3;
+  --sheet:#FBFCFD;
+  --ink:#16263D;
+  --line:#B9C6D2;
+  --thick:#16263D;
+  --solved:#0E7C6B;
+  --bad:#D2453D;
+  --badbg:#FADCD9;
+  --sel:#FFE08A;
+  --peer:#EAF1F6;
+  --same:#CFE3F3;
+  --btn:#16263D;
+  --btntext:#FBFCFD;
+  --muted:#5A6B80;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#0F1A28;
+    --sheet:#16263D;
+    --ink:#EAF1F6;
+    --line:#35496A;
+    --thick:#9FB4CC;
+    --solved:#4FD1B8;
+    --bad:#FF8A80;
+    --badbg:#5A2A2C;
+    --sel:#6B5A1F;
+    --peer:#1D3150;
+    --same:#27466F;
+    --btn:#EAF1F6;
+    --btntext:#0F1A28;
+    --muted:#9FB4CC;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:"Avenir Next","Trebuchet MS","Segoe UI",Roboto,sans-serif}
+main{max-width:440px;margin:0 auto;padding:16px 12px 28px}
+h1{font-size:1.35rem;margin:4px 2px 2px;font-weight:700;letter-spacing:-.01em}
+.sub{margin:0 2px 12px;color:var(--muted);font-size:.9rem}
+
+#board{
+  display:grid;grid-template-columns:repeat(9,1fr);
+  width:100%;aspect-ratio:1;background:var(--sheet);
+  border:3px solid var(--thick);border-radius:6px;overflow:hidden;
+  touch-action:manipulation;user-select:none;-webkit-user-select:none;
+}
+.cell{
+  display:flex;align-items:center;justify-content:center;
+  font-size:clamp(18px,6.4vw,28px);font-weight:600;
+  border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+  cursor:pointer;position:relative;color:var(--ink);
+}
+.cell:nth-child(9n){border-right:none}
+.cell:nth-child(n+73){border-bottom:none}
+.cell:nth-child(9n+3),.cell:nth-child(9n+6){border-right:2px solid var(--thick)}
+.cell:nth-child(n+19):nth-child(-n+27),.cell:nth-child(n+46):nth-child(-n+54){border-bottom:2px solid var(--thick)}
+.cell.peer{background:var(--peer)}
+.cell.same{background:var(--same)}
+.cell.sel{background:var(--sel)}
+.cell.solved{color:var(--solved);font-weight:500}
+.cell.bad{background:var(--badbg);color:var(--bad)}
+.cell.pop{animation:pop .35s ease-out both}
+@keyframes pop{from{opacity:0;transform:scale(.4)}to{opacity:1;transform:scale(1)}}
+@media (prefers-reduced-motion: reduce){.cell.pop{animation:none}}
+
+#status{
+  min-height:2.6em;margin:12px 2px 10px;font-size:.95rem;line-height:1.35;color:var(--muted)
+}
+#status.ok{color:var(--solved);font-weight:600}
+#status.err{color:var(--bad);font-weight:600}
+
+#pad{display:grid;grid-template-columns:repeat(9,1fr);gap:5px;margin-bottom:10px}
+button{
+  font:inherit;border:none;border-radius:8px;cursor:pointer;
+  background:var(--sheet);color:var(--ink);
+  border:1.5px solid var(--line);
+}
+button:focus-visible,.cell:focus-visible{outline:3px solid var(--solved);outline-offset:2px}
+#pad button{height:46px;font-size:1.15rem;font-weight:600;padding:0}
+#pad button:active{background:var(--same)}
+.row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px}
+.row button{height:44px;font-size:.92rem;font-weight:600}
+#solve{
+  width:100%;height:54px;font-size:1.1rem;font-weight:700;
+  background:var(--btn);color:var(--btntext);border-color:var(--btn);margin-bottom:8px
+}
+#solve:active{opacity:.85}
+</style>
+</head>
+<body>
+<main>
+  <h1>Sudoku Solver</h1>
+  <p class="sub">Enter the numbers you have. Solves any valid puzzle.</p>
+
+  <div id="board" role="grid" aria-label="Sudoku board"></div>
+  <div id="status" role="status" aria-live="polite">Tap a square, then pick a number.</div>
+
+  <div id="pad"></div>
+
+  <button id="solve">Solve</button>
+  <div class="row">
+    <button id="undo">Undo</button>
+    <button id="erase">Erase</button>
+    <button id="clear">Clear all</button>
+    <button id="example">Hard example</button>
+  </div>
+  <div class="row" style="grid-template-columns:1fr 1fr">
+    <button id="import">Import 81 digits</button>
+    <button id="export">Copy as text</button>
+  </div>
+</main>
+
+<script>
+(() => {
+  const board = document.getElementById('board');
+  const statusEl = document.getElementById('status');
+  const cells = [];
+  // state
+  let given = new Array(81).fill(0);   // user-entered digits
+  let solved = new Array(81).fill(0);  // digits filled by the solver
+  let sel = -1;
+  let history = [];
+
+  // ---------- build UI ----------
+  for (let i = 0; i < 81; i++) {
+    const c = document.createElement('div');
+    c.className = 'cell';
+    c.setAttribute('role', 'gridcell');
+    c.tabIndex = 0;
+    c.addEventListener('click', () => select(i));
+    board.appendChild(c);
+    cells.push(c);
+  }
+  const pad = document.getElementById('pad');
+  for (let n = 1; n <= 9; n++) {
+    const b = document.createElement('button');
+    b.textContent = n;
+    b.setAttribute('aria-label', 'Enter ' + n);
+    b.addEventListener('click', () => enter(n));
+    pad.appendChild(b);
+  }
+
+  // ---------- helpers ----------
+  const peersOf = i => {
+    const r = (i / 9) | 0, c = i % 9, set = new Set();
+    for (let k = 0; k < 9; k++) { set.add(r * 9 + k); set.add(k * 9 + c); }
+    const br = r - r % 3, bc = c - c % 3;
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) set.add((br + a) * 9 + bc + b);
+    set.delete(i);
+    return [...set];
+  };
+  const PEERS = Array.from({ length: 81 }, (_, i) => peersOf(i));
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg;
+    statusEl.className = kind || '';
+  }
+
+  function conflicts(g) {
+    const bad = new Set();
+    for (let i = 0; i < 81; i++) {
+      if (!g[i]) continue;
+      for (const p of PEERS[i]) if (g[p] === g[i]) { bad.add(i); bad.add(p); }
+    }
+    return bad;
+  }
+
+  function current() { return given.map((v, i) => v || solved[i]); }
+
+  function render(animate) {
+    const g = current();
+    const bad = conflicts(g);
+    const selVal = sel >= 0 ? g[sel] : 0;
+    let order = 0;
+    for (let i = 0; i < 81; i++) {
+      const c = cells[i];
+      c.textContent = g[i] || '';
+      let cls = 'cell';
+      if (sel >= 0) {
+        if (i === sel) cls += ' sel';
+        else if (selVal && g[i] === selVal) cls += ' same';
+        else if (PEERS[sel].includes(i)) cls += ' peer';
+      }
+      if (!given[i] && solved[i]) {
+        cls += ' solved';
+        if (animate) { cls += ' pop'; c.style.animationDelay = Math.min(order++ * 14, 700) + 'ms'; }
+      }
+      if (bad.has(i)) cls += ' bad';
+      c.className = cls;
+      c.setAttribute('aria-label', 'Row ' + (((i / 9) | 0) + 1) + ' column ' + (i % 9 + 1) + (g[i] ? ', ' + g[i] : ', empty'));
+    }
+    return bad;
+  }
+
+  function pushHistory() {
+    history.push(given.slice());
+    if (history.length > 200) history.shift();
+  }
+
+  function clearSolved() { solved = new Array(81).fill(0); }
+
+  // ---------- interaction ----------
+  function select(i) { sel = i; render(false); }
+
+  function enter(n) {
+    if (sel < 0) { setStatus('Tap a square first.', ''); return; }
+    pushHistory();
+    clearSolved();
+    given[sel] = n;
+    const bad = render(false);
+    setStatus(bad.size ? 'Two matching numbers share a row, column or box.' : 'Ready. Press Solve when done.', bad.size ? 'err' : '');
+  }
+  function erase() {
+    if (sel < 0) return;
+    pushHistory();
+    clearSolved();
+    given[sel] = 0;
+    render(false);
+    setStatus('Ready. Press Solve when done.', '');
+  }
+
+  document.getElementById('erase').onclick = erase;
+  document.getElementById('undo').onclick = () => {
+    if (!history.length) return;
+    given = history.pop();
+    clearSolved();
+    render(false);
+    setStatus('Undone.', '');
+  };
+  document.getElementById('clear').onclick = () => {
+    pushHistory();
+    given = new Array(81).fill(0);
+    clearSolved();
+    sel = -1;
+    render(false);
+    setStatus('Board cleared.', '');
+  };
+  document.getElementById('example').onclick = () => {
+    // A well-known very hard puzzle
+    load('800000000003600000070090200050007000000045700000100030001000068008500010090000400');
+  };
+  document.getElementById('import').onclick = () => {
+    const s = prompt('Paste 81 characters. Use 1-9 for numbers and 0 or . for empty squares.');
+    if (s === null) return;
+    const t = s.replace(/[^0-9.]/g, '');
+    if (t.length !== 81) { setStatus('Need exactly 81 characters. Got ' + t.length + '.', 'err'); return; }
+    load(t);
+  };
+  document.getElementById('export').onclick = async () => {
+    const t = given.map(v => v || '0').join('');
+    try { await navigator.clipboard.writeText(t); setStatus('Copied the 81-digit puzzle.', 'ok'); }
+    catch { prompt('Copy this text:', t); }
+  };
+  function load(str) {
+    pushHistory();
+    given = [...str].map(ch => (ch === '.' ? 0 : +ch));
+    clearSolved();
+    sel = -1;
+    render(false);
+    setStatus('Puzzle loaded. Press Solve.', '');
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'BUTTON' && (e.key === 'Enter' || e.key === ' ')) return;
+    if (e.key >= '1' && e.key <= '9') enter(+e.key);
+    else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') erase();
+    else if (sel >= 0) {
+      let r = (sel / 9) | 0, c = sel % 9;
+      if (e.key === 'ArrowUp') r = (r + 8) % 9;
+      else if (e.key === 'ArrowDown') r = (r + 1) % 9;
+      else if (e.key === 'ArrowLeft') c = (c + 8) % 9;
+      else if (e.key === 'ArrowRight') c = (c + 1) % 9;
+      else return;
+      e.preventDefault();
+      select(r * 9 + c);
+      cells[sel].focus();
+    }
+  });
+
+  // ---------- solver (bitmask + minimum-remaining-values backtracking) ----------
+  const popcount = x => { let n = 0; while (x) { x &= x - 1; n++; } return n; };
+
+  function solve(grid, limit) {
+    const g = grid.slice();
+    const rows = new Array(9).fill(0), cols = new Array(9).fill(0), boxes = new Array(9).fill(0);
+    for (let i = 0; i < 81; i++) {
+      if (!g[i]) continue;
+      const bit = 1 << g[i], r = (i / 9) | 0, c = i % 9, b = ((r / 3) | 0) * 3 + ((c / 3) | 0);
+      rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit;
+    }
+    let count = 0, first = null;
+
+    function rec() {
+      // choose the empty cell with the fewest candidates
+      let best = -1, bestMask = 0, bestN = 10;
+      for (let i = 0; i < 81; i++) {
+        if (g[i]) continue;
+        const r = (i / 9) | 0, c = i % 9, b = ((r / 3) | 0) * 3 + ((c / 3) | 0);
+        const mask = ~(rows[r] | cols[c] | boxes[b]) & 0x3FE;
+        const n = popcount(mask);
+        if (n < bestN) {
+          best = i; bestMask = mask; bestN = n;
+          if (n <= 1) break;
+        }
+      }
+      if (best === -1) { count++; if (!first) first = g.slice(); return count >= limit; }
+      if (bestN === 0) return false;
+      const r = (best / 9) | 0, c = best % 9, b = ((r / 3) | 0) * 3 + ((c / 3) | 0);
+      for (let d = 1; d <= 9; d++) {
+        const bit = 1 << d;
+        if (!(bestMask & bit)) continue;
+        g[best] = d; rows[r] |= bit; cols[c] |= bit; boxes[b] |= bit;
+        if (rec()) return true;
+        g[best] = 0; rows[r] &= ~bit; cols[c] &= ~bit; boxes[b] &= ~bit;
+      }
+      return false;
+    }
+    rec();
+    return { count, solution: first };
+  }
+
+  document.getElementById('solve').onclick = () => {
+    clearSolved();
+    const bad = render(false);
+    if (bad.size) { setStatus('Fix the red squares first. They break the sudoku rules.', 'err'); return; }
+    if (given.every(v => !v)) { setStatus('Add at least one number first.', ''); return; }
+
+    const t0 = performance.now();
+    const { count, solution } = solve(given, 2);
+    const ms = Math.max(1, Math.round(performance.now() - t0));
+
+    if (count === 0) {
+      setStatus('No solution exists for these numbers. Check for a typo.', 'err');
+      return;
+    }
+    solved = solution.map((v, i) => (given[i] ? 0 : v));
+    render(true);
+    if (count > 1) setStatus('Solved in ' + ms + ' ms. This puzzle has more than one solution; showing one of them.', 'ok');
+    else setStatus('Solved in ' + ms + ' ms. This is the only solution.', 'ok');
+  };
+
+  render(false);
+})();
+</script>
+</body>
+</html>
